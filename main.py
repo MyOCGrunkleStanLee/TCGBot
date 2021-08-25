@@ -8,10 +8,11 @@ import os
 import logging
 import db
 import mysql
+import digimon.digimon
 import vanguard.vanguard
 from cogs.commands import Commands
 
-
+developer = False
 load_dotenv()
 try:
     db.connect(os.getenv('DB_HOST'), os.getenv('DB_DATABASE'), os.getenv('DB_USER'), os.getenv('DB_PASSWORD'))
@@ -27,10 +28,33 @@ if bool(os.getenv('DEBUG')):
 
 # set up and info of the bot
 description = "A digimon bot with a combat system and a tomagochi mini-game to keep players entertained"
-bot = commands.Bot(command_prefix=os.getenv('BOT_PREFIX'), description=description)
+
+if developer is True:
+    prefix = os.getenv("Developer_BOT_PREFIX")
+else:
+    prefix = os.getenv("BOT_PREFIX")
+
+bot = commands.Bot(command_prefix=prefix, description=description)
+bot.remove_command('help')
 bot.add_cog(Commands(bot))
+
 cd = []
 active_access_token = {}
+
+
+async def validate_db():
+    next_connection_verification = int(float(time.time()))
+    next_db_validation = int(float(time.time()))
+    while True:
+        if int(float(time.time())) > next_connection_verification:
+            try:
+                db.connect(os.getenv('DB_HOST'), os.getenv('DB_DATABASE'), os.getenv('DB_USER'), os.getenv('DB_PASSWORD'))
+            except mysql.connector.Error as err:
+                print("Something went wrong: {}".format(err))
+            next_connection_verification += 900
+        if int(float(time.time())) > next_db_validation:
+            await digimon.digimon.verify_digimon_db()
+            next_db_validation += 86400
 
 
 def fetch_access_token():
@@ -40,6 +64,7 @@ def fetch_access_token():
         .format(os.getenv("Public_Key"), os.getenv("Private_Key"))
     global active_access_token
     active_access_token = requests.request("GET", url, headers=header, data=data).json()
+
 
 
 def on_cd(user):
@@ -65,16 +90,26 @@ async def on_ready():
     active_access_token.update({"expire_time": str(active_access_token.get("expires_in") + int(time.time()))})
     os.environ["Access_Token"] = active_access_token.get("access_token")
     os.environ["expire_time"] = active_access_token.get("expire_time")
-
-    # vanguard.vanguard.verify_vanguard_db()
     print(time.ctime())
     print('Logged in as {} {}. {} guilds connected'.format(bot.user.name, bot.user.id, len(bot.guilds)))
     print('------')
+    await validate_db()
+
+
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandNotFound):
+        return
+
+    await ctx.send(f"There has been an error on command {ctx.command} the error is {error} "
+                   f"please send a bug report by using {os.getenv('BOT_PREFIX')}report "
+                   f"please be as descriptive as possible and it will be resolved as soon as possible."
+                   f" Thank you for your understanding!")
 
 
 @bot.event
 async def on_message(message):
-    if int(os.environ["expire_time"]) > int(float(time.time())):
+    if int(float(os.environ["expire_time"])) > int(float(time.time())):
         fetch_access_token()
         active_access_token.update({"expire_time": active_access_token.get("expires_in") + time.time()})
         os.environ["Access_Token"] = active_access_token.get("access_token")
@@ -88,7 +123,11 @@ async def on_message(message):
     if on_cd(message.author) is True:
         await message.channel.send("You are sending messages too fast!")
         return
-
     await bot.process_commands(message)
 
-bot.run(os.getenv('DISCORD_TOKEN'))
+if developer is True:
+    bot.run(os.getenv("Development_Token"))
+
+else:
+    bot.run(os.getenv('DISCORD_TOKEN'))
+

@@ -1,4 +1,7 @@
 import mysql.connector
+import time
+import os
+import digimon
 
 connections = {}
 
@@ -19,3 +22,4 @@ def get_connection(name='main'):
 
 def commit(name='main'):
     connections[name].commit()
+
