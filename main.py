@@ -9,15 +9,13 @@ import logging
 import db
 import mysql
 import digimon.digimon
+import sys
 import vanguard.vanguard
 from cogs.commands import Commands
 
 developer = False
 load_dotenv()
-try:
-    db.connect(os.getenv('DB_HOST'), os.getenv('DB_DATABASE'), os.getenv('DB_USER'), os.getenv('DB_PASSWORD'))
-except mysql.connector.Error as err:
-    print("Something went wrong: {}".format(err))
+next_digimon_db_check = int(float(time.time()))
 
 if bool(os.getenv('DEBUG')):
     logger = logging.getLogger('discord')
@@ -42,19 +40,25 @@ cd = []
 active_access_token = {}
 
 
-async def validate_db():
-    next_connection_verification = int(float(time.time()))
-    next_db_validation = int(float(time.time()))
-    while True:
-        if int(float(time.time())) > next_connection_verification:
-            try:
-                db.connect(os.getenv('DB_HOST'), os.getenv('DB_DATABASE'), os.getenv('DB_USER'), os.getenv('DB_PASSWORD'))
-            except mysql.connector.Error as err:
-                print("Something went wrong: {}".format(err))
-            next_connection_verification += 900
-        if int(float(time.time())) > next_db_validation:
-            await digimon.digimon.verify_digimon_db()
-            next_db_validation += 86400
+def connect():
+    try:
+        db.connect(os.getenv('DB_HOST'), os.getenv('DB_DATABASE'), os.getenv('DB_USER'), os.getenv('DB_PASSWORD'))
+    except mysql.connector.Error as err:
+        print("Something went wrong: {}".format(err))
+
+
+def qualified(user):
+    if user.id == 299605026941173760:  # Grunkle
+        return True
+
+
+@bot.command()
+async def kill(ctx):
+    # admin only command turns off the bot, usually in case of malfunction or updating
+    if qualified(ctx.message.author) is False:
+        return
+    await ctx.send("Shutting down bot.")
+    sys.exit()
 
 
 def fetch_access_token():
@@ -86,6 +90,7 @@ def on_cd(user):
 
 @bot.event
 async def on_ready():
+    connect()
     fetch_access_token()
     active_access_token.update({"expire_time": str(active_access_token.get("expires_in") + int(time.time()))})
     os.environ["Access_Token"] = active_access_token.get("access_token")
@@ -93,13 +98,17 @@ async def on_ready():
     print(time.ctime())
     print('Logged in as {} {}. {} guilds connected'.format(bot.user.name, bot.user.id, len(bot.guilds)))
     print('------')
-    await validate_db()
 
 
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
         return
+
+    if str(error) == "Command raised an exception: OperationalError: MySQL Connection not available.":
+        print("sql error")
+        connect()
+        await bot.process_commands(ctx)
 
     await ctx.send(f"There has been an error on command {ctx.command} the error is {error} "
                    f"please send a bug report by using {os.getenv('BOT_PREFIX')}report "
@@ -109,6 +118,8 @@ async def on_command_error(ctx, error):
 
 @bot.event
 async def on_message(message):
+    global next_digimon_db_check
+
     if int(float(os.environ["expire_time"])) > int(float(time.time())):
         fetch_access_token()
         active_access_token.update({"expire_time": active_access_token.get("expires_in") + time.time()})
@@ -123,7 +134,12 @@ async def on_message(message):
     if on_cd(message.author) is True:
         await message.channel.send("You are sending messages too fast!")
         return
+
     await bot.process_commands(message)
+
+    if int(float(time.time())) > next_digimon_db_check:
+        next_digimon_db_check += 43200
+        await digimon.digimon.verify_digimon_db()
 
 if developer is True:
     bot.run(os.getenv("Development_Token"))

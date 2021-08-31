@@ -4,6 +4,7 @@ import digimon
 import time
 import asyncio
 from pyshorteners import Shortener
+import pyshorteners.exceptions
 
 _requests_count = 0
 _request_time = time.time()
@@ -22,7 +23,11 @@ def track_requests():
 
 
 def shorten_url(url):
-    return Shortener(api_key=os.getenv('bitly_access_token')).bitly.short(url)
+    try:
+        return Shortener(api_key=os.getenv('bitly_access_token')).bitly.short(url)
+
+    except pyshorteners.exceptions.ShorteningErrorException:
+        return False
 
 
 async def fetch_response(url, json=None, data=None, post=False):
@@ -86,8 +91,10 @@ async def fetch_card_info(product_ids):
             if card.get("lowPrice") is not None:
                 url = f"https://api.tcgplayer.com/catalog/products/{card.get('productId')}?limit=1&getExtendedFields=True"
                 r = await fetch_response(url)
-                link = r.get("results")[0].get("url")
-                link = shorten_url(link)
+                link = shorten_url(r.get("results")[0].get("url"))
+                while link is False:
+                    await asyncio.sleep(1)
+                    link = shorten_url(r.get("results")[0].get("url"))
                 lowest_price = "{}: {}".format(card.get("subTypeName"), card.get("lowPrice"))
                 cards.append({product_id: "{}: {}".format(lowest_price, link)})
     return cards
