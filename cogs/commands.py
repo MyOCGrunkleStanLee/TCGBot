@@ -1,8 +1,6 @@
 from discord.ext import commands
 import discord
-import digimon
-import digimon.digimon_db
-import vanguard
+import database
 import asyncio
 import math
 import os
@@ -12,6 +10,7 @@ _emojis = {
     "next": '▶️'
 }
 _color_to_emoji = {"red": "🔴", "yellow": "🟡", "green": "🟢", "blue": "🔵", "purple": "🟣", "white": "⚪", "black": "⚫"}
+_currently_supported = ["digimon"]
 
 
 class Commands(commands.Cog):
@@ -45,7 +44,14 @@ class Commands(commands.Cog):
             await ctx.send("You need to include a parameter to search!")
             return
 
-        search = digimon.digimon_db.fetch_card(parameter)
+        longest_list = []
+        relevant_game = None
+        for game in _currently_supported:
+            search = database.fetch_card(game, parameter)
+            if len(search) > len(longest_list):
+                longest_list = search
+                relevant_game = game
+        search = database.fetch_card(relevant_game, parameter)
 
         async def send_cards(current_page, cards=search, message=None):
             max_on_page = 15
@@ -78,7 +84,7 @@ class Commands(commands.Cog):
             tmp_cards = cards[offset:offset + max_on_page]
             for x in tmp_cards:
                 value += "{}: {}{} {} \n".format(x.get("id"), _color_to_emoji.get(x.get("color").lower()),
-                                                      x.get("name"), x.get("card_number"))
+                                                 x.get("name"), x.get("card_number"))
 
             embed.add_field(name="\u200b", value=value)
             if len(cards) == 1:
@@ -86,7 +92,7 @@ class Commands(commands.Cog):
                     await message.remove_reaction(_emojis['next'], message.author)
                     await message.remove_reaction(_emojis['back'], message.author)
 
-                embed.set_footer(text="This product uses TCGplayer data but is not endorsed or certified by TCGplayer.")
+                embed.set_footer(text="This product uses TCGplayer data but is not endorsed or certified by TCGPlayer.")
                 card_number = cards[0].get("card_number")
                 if "BT6" in card_number or "EX1" in card_number or "BT7" in card_number:
                     embed.add_field(name="\u200b", value="effect: \n{} \n source effect: \n{}"
@@ -175,9 +181,9 @@ class Commands(commands.Cog):
 
                 else:
                     # get a new list of cards based on what the user set as a follow up search
-                    search = digimon.digimon_db.fetch_card(result.content)
+                    new_search = database.fetch_card(relevant_game, result.content)
                     like_cards = []
-                    for card in search:
+                    for card in new_search:
                         if card in cards:
                             like_cards.append(card)
 
@@ -213,7 +219,7 @@ class Commands(commands.Cog):
                         result = await ctx.bot.wait_for('message', check=message_check, timeout=60)
                     except TimeoutError():
                         return
-                    s = digimon.digimon_db.fetch_card(result.content)
+                    s = database.fetch_card(relevant_game, result.content)
                     like_cards = []
                     for card in s:
                         if card in cards:

@@ -1,21 +1,21 @@
-from __future__ import print_function
 from discord.ext import commands
+from cogs.commands import Commands
 from dotenv import load_dotenv
 from mysql import connector
+import mysql
 import requests
 import time
 import os
 import logging
-import db
-import mysql
-import digimon.digimon
 import sys
-import vanguard.vanguard
-from cogs.commands import Commands
+import asyncio
+from datetime import datetime
+import threading
+import db
+import digimon.digimon
 
 developer = False
 load_dotenv()
-next_digimon_db_check = int(float(time.time()))
 
 if bool(os.getenv('DEBUG')):
     logger = logging.getLogger('discord')
@@ -25,7 +25,7 @@ if bool(os.getenv('DEBUG')):
     logger.addHandler(handler)
 
 # set up and info of the bot
-description = "A digimon bot with a combat system and a tomagochi mini-game to keep players entertained"
+description = "A bot that allows users to search for cards and displays them with pricing info from TCGPlayer"
 
 if developer is True:
     prefix = os.getenv("Developer_BOT_PREFIX")
@@ -40,6 +40,7 @@ cd = []
 active_access_token = {}
 
 
+# connects the bot to the SQL database
 def connect():
     try:
         db.connect(os.getenv('DB_HOST'), os.getenv('DB_DATABASE'), os.getenv('DB_USER'), os.getenv('DB_PASSWORD'))
@@ -47,9 +48,22 @@ def connect():
         print("Something went wrong: {}".format(err))
 
 
+# used to stop people from using admin commands
 def qualified(user):
-    if user.id == 299605026941173760:  # Grunkle
+    if user.id == 299605026941173760:  # My Discord ID
         return True
+
+
+def check_time():
+    # This function runs periodically every 1 second to see if its time to run a check on the DB
+    threading.Timer(1, check_time).start()
+    now = datetime.now()
+    current_time = now.strftime("%H:%M:%S")
+    if current_time == '00:00:00':  # check at midnight for less traffic
+        asyncio.run(verify_databases())
+
+
+check_time()
 
 
 @bot.command()
@@ -61,6 +75,7 @@ async def kill(ctx):
     sys.exit()
 
 
+# gets an access token for TCGPlayer
 def fetch_access_token():
     url = "https://api.tcgplayer.com/token"
     header = {"items": "application/x-www-form-urlencoded"}
@@ -70,24 +85,16 @@ def fetch_access_token():
     active_access_token = requests.request("GET", url, headers=header, data=data).json()
 
 
+async def verify_databases():
+    try:
+        await digimon.digimon.verify_digimon_db()
 
-def on_cd(user):
-    comp_v = 0
-    for author in cd:
-        comp_v += 1
-        if str(user) in author:
-            time1 = time.time()
-            time2 = float(author.split()[-1])
-            cd.remove(author)
-            cd.append(str(user) + " " + str(time.time()))
-            if time1 - time2 > .5:
-                return False
-            else:
-                return True
-    if comp_v == len(cd):
-        cd.append(str(user) + " " + str(time.time()))
+    except mysql.connector.errors.DatabaseError:
+        connect()
+        await digimon.digimon.verify_digimon_db()
 
 
+# when the bot has connected to the discord servers it triggers on_ready
 @bot.event
 async def on_ready():
     connect()
@@ -100,25 +107,9 @@ async def on_ready():
     print('------')
 
 
-@bot.event
-async def on_command_error(ctx, error):
-    if isinstance(error, commands.CommandNotFound):
-        return
-
-    if str(error) == "Command raised an exception: OperationalError: MySQL Connection not available.":
-        print("sql error")
-        connect()
-        await bot.process_commands(ctx)
-
-    await ctx.send(f"There has been an error on command {ctx.command} the error is {error} "
-                   f"please send a bug report by using {os.getenv('BOT_PREFIX')}report "
-                   f"please be as descriptive as possible and it will be resolved as soon as possible."
-                   f" Thank you for your understanding!")
-
-
+# when the bot detects a message in discord it triggers on_message
 @bot.event
 async def on_message(message):
-    global next_digimon_db_check
 
     if int(float(os.environ["expire_time"])) > int(float(time.time())):
         fetch_access_token()
@@ -130,16 +121,8 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
-    # if the user is spamming we also want to ignore any messages they send
-    if on_cd(message.author) is True:
-        await message.channel.send("You are sending messages too fast!")
-        return
-
     await bot.process_commands(message)
 
-    if int(float(time.time())) > next_digimon_db_check:
-        next_digimon_db_check += 43200
-        await digimon.digimon.verify_digimon_db()
 
 if developer is True:
     bot.run(os.getenv("Development_Token"))

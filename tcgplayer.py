@@ -1,6 +1,5 @@
 import requests
 import os
-import digimon
 import time
 import asyncio
 from pyshorteners import Shortener
@@ -9,7 +8,7 @@ import pyshorteners.exceptions
 _requests_count = 0
 _request_time = time.time()
 _searched = []
-_category = {'Cardfight Vanguard': 16, }
+_category = {'vanguard': 16, "digimon": 63}
 
 
 def track_requests():
@@ -56,46 +55,48 @@ async def fetch_response(url, json=None, data=None, post=False):
     return search_response_data
 
 
-async def fetch_product_id(card_name, card_game=None):
+async def fetch_product_id(card_name, card_game):
     if card_name in _searched:
         return {"results": []}
     else:
         _searched.append(card_name)
-
-    url = "https://api.tcgplayer.com/v1.39.0/catalog/categories/63/search"
+    category_id = _category.get(card_game.lower())
+    url = f"https://api.tcgplayer.com/v1.39.0/catalog/categories/{category_id}/search"
     json = {"sort": "string", "limit": 100, "offset": 0, "filters": [{"name": "ProductName", "values": [card_name]}]}
     search_response_data = await fetch_response(url, json, post=True)
     return search_response_data
 
 
-async def set_product_id(data):
-    global _searched
-    for card in data.get("results"):
-        url = f"https://api.tcgplayer.com/catalog/products/{card}?limit=1&getExtendedFields=True"
-        response = await fetch_response(url)
-
-        if response.get("results") is not None:
-            card_number = response.get("results")[0].get("extendedData")
-            if len(card_number) > 2:
-                card_number = (card_number[1].get("value") + " N").split(sep=" ")[0]
-                digimon.digimon_db.set_product_id_by_card_number(card, card_number)
-
-
-async def fetch_card_info(product_ids):
-    cards = []
-
+async def fetch_card_info(product_ids, card_id):
+    links = []
+    prices = []
+    pid = ""
     for product_id in product_ids:
-        url = f"https://api.tcgplayer.com/pricing/product/{product_id}"
+        pid += f"{str(product_id)},"
+    if pid == "":
+        return [[], []]
+    url = f"https://api.tcgplayer.com/catalog/products/{pid[:-1]}?getExtendedFields=True"
+    response = await fetch_response(url)
+    for result in response.get('results'):
+        try:
+            number = result.get('extendedData')[1].get('value')
+        except IndexError:
+            continue
+        if card_id is None:
+            return [result.get('extendedData')[0].get('value'), False]
+
+        if card_id not in number and number is not None:
+            number = result.get('extendedData')[0].get('value')
+            if card_id not in number and number is not None:
+                continue
+
+        url = f"https://api.tcgplayer.com/pricing/product/{result.get('productId')}"
         response = await fetch_response(url)
-        for card in response.get("results"):
-            if card.get("lowPrice") is not None:
-                url = f"https://api.tcgplayer.com/catalog/products/{card.get('productId')}?limit=1&getExtendedFields=True"
-                r = await fetch_response(url)
-                link = shorten_url(r.get("results")[0].get("url"))
-                while link is False:
-                    await asyncio.sleep(1)
-                    link = shorten_url(r.get("results")[0].get("url"))
-                lowest_price = "{}: {}".format(card.get("subTypeName"), card.get("lowPrice"))
-                cards.append({product_id: "{}: {}".format(lowest_price, link)})
-    return cards
+        for card in response.get('results'):
+            if card.get('lowPrice') is None:
+                continue
+            links.append(result.get('url'))
+            prices.append(card.get('lowPrice'))
+    return [links, prices]
+
 
